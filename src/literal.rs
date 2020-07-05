@@ -13,8 +13,10 @@ pub struct Literal(u32);
 /// The invalid literal, used to represent if a clause is no longer valid
 
 impl Literal {
-  pub const INVALID: Literal = Literal(0);
-  pub const fn new(var: u32, negated: bool) -> Self { Self((var << 1) + (negated as u32)) }
+  /// A marker literal to mark invalid values. Not actually unreachable by normal code,
+  /// But would require a really large variable set.
+  pub const INVALID: Literal = Literal(0u32.wrapping_sub(1));
+  pub const fn new(var: u32, negated: bool) -> Self { Self((var << 1) | (negated as u32)) }
   /// returns the value for this literal given these assignments
   pub fn assn(self, assignments: &[Option<bool>]) -> Option<bool> {
     assignments[self.var() as usize].map(|val| self.negated() ^ val)

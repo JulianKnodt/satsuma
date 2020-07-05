@@ -119,4 +119,11 @@ impl WatchList {
       }
     }
   }
+  pub fn drain(&mut self) -> impl Iterator<Item=(Literal, Literal, CRef)> + '_ {
+    self.occs.iter_mut().enumerate().flat_map(|(l_0, watches)| {
+      watches.drain().map(move |(cref, l_1)| {
+        (Literal::from(l_0 as u32), l_1, cref)
+      })
+    })
+  }
 }

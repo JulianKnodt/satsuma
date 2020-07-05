@@ -16,6 +16,9 @@ pub struct Solver {
   /// stack of assignments, needed for backtracking
   assignment_trail: Vec<Literal>,
 
+  /// Which index in the assignment trail was a variable assigned at
+  level_indeces: Vec<usize>,
+
   /// keeps track of which clause caused a variable to be assigned and what level it was
   /// assigned it. None in the case of unassigned or assumption
   levels: Vec<Option<u32>>,
@@ -36,9 +39,6 @@ pub struct Solver {
   /// which level is this solver currently at
   level: u32,
 
-  /// Which index in the assignment trail was a variable assigned at
-  level_indeces: Vec<usize>,
-
   /// Restart State using Luby
   restart_state: RestartState,
 
@@ -55,6 +55,27 @@ pub struct Solver {
 }
 
 impl Solver {
+  pub fn new(db: Database) -> Self {
+    let max_vars = db.max_var;
+    Self {
+      assignments: vec![None; max_vars as usize],
+      assignment_trail: vec![],
+      level_indeces: vec![],
+      levels: vec![None; max_vars as usize],
+      causes: vec![None; max_vars as usize],
+      watch_list: WatchList::new(max_vars),
+      database: db,
+      polarities: vec![false; max_vars as usize],
+      var_state: VariableState::new(max_vars),
+      level: 0,
+      restart_state: RestartState::new(RESTART_BASE, RESTART_INC),
+
+      analyze_seen: HashMap::with_hasher(Default::default()),
+      stats: Stats::new(),
+      learnt_buf: vec![],
+      unit_buf: vec![],
+    }
+  }
   /// Attempt to find a satisfying assignment for the current solver.
   /// Returning true if there is a solution found.
   pub fn solve(&mut self) -> bool {
@@ -329,33 +350,18 @@ enum SeenState {
   Required,
 }
 
-/*
-pub fn from_dimacs<S: AsRef<std::path::Path>>(s: S) -> std::io::Result<Self> {
-  use crate::dimacs::from_dimacs;
-  let (clauses, max_var) = from_dimacs(s)?;
-  let db = ClauseDatabase::new(max_var, clauses);
-  let (wl, units) = WatchList::new(&db);
-  let var_state = VariableState::from(&db);
-  let mut solver = Self {
-    id: db.next_id(),
-    assignments: vec![None; max_var],
-    causes: vec![None; max_var],
-    assignment_trail: vec![],
-    level_indeces: vec![],
-    levels: vec![None; max_var],
-    watch_list: wl,
-    polarities: vec![false; max_var],
-    var_state,
-    latest_clauses: vec![0; db.num_solvers()],
-    db: Arc::new(db),
-    level: 0,
-    restart_state: RestartState::new(RESTART_BASE, RESTART_INC),
-    stats: Stats::new(),
-    analyze_seen: RefCell::new(HashMap::new()),
-  };
-  for (cause, lit) in units {
-    assert_eq!(solver.with(lit, Some(cause.clone())), None, "UNSAT");
+use std::path::Path;
+use std::io;
+
+pub fn solver_from_dimacs<S: AsRef<Path>>(s: S) -> io::Result<Solver> {
+  let mut db = Database::new();
+  let crefs = crate::parser::from_dimacs_2(s, &mut db)?;
+  let mut solver = Solver::new(db);
+  for cref in crefs.into_iter() {
+    let lit = solver.watch_list.watch(cref, &solver.database);
+    if lit.is_valid() {
+      assert_eq!(solver.with(lit, Some(cref)), None, "UNSAT from initial conditions");
+    }
   }
   Ok(solver)
 }
-*/
