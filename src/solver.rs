@@ -134,7 +134,7 @@ impl Solver {
     // TODO convert this into a reused buffer
     let learnt = &mut self.learnt_buf;
 
-    let mut seen = &mut self.analyze_seen;
+    let seen = &mut self.analyze_seen;
     let curr_len = self.assignment_trail.len() - 1;
     let var_state = &mut self.var_state;
     let trail = &self.assignment_trail;
@@ -235,7 +235,7 @@ impl Solver {
   }
   /// Records a literal written at the current level, with a possible cause
   fn with(&mut self, lit: Literal, cause: Option<CRef>) -> Option<CRef> {
-    let mut units = &mut self.unit_buf;
+    let units = &mut self.unit_buf;
     units.clear();
     match cause {
       // In the case there was no previous cause, we need to do one iteration
