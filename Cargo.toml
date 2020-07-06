@@ -1,19 +1,19 @@
 [package]
-name = "small_sat"
+name = "satsuma"
 version = "0.1.0"
 authors = ["julianknodt <julianknodt@gmail.com>"]
 edition = "2018"
-# default-run = "solve_dimacs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rand = "0.7.2"
-core_affinity = "0.5.9"
 priority-queue = "0.6.0"
 rustc-hash = "1.1.0"
 hashbrown = "0.8.0"
 clap = { version = "2.33.1", optional = true }
+
+[features]
+default = ["clap"]
 
 [profile.release]
 lto = true

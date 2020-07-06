@@ -1,12 +1,14 @@
 use crate::{CRef, Database, Literal, Record, RestartState, Stats, VariableState, WatchList};
 use hashbrown::{hash_map::Entry, HashMap};
 use rustc_hash::FxHasher;
-use std::hash::BuildHasherDefault;
+use std::{hash::BuildHasherDefault, io, mem::replace, path::Path};
 
 pub const RESTART_BASE: u64 = 100;
 pub const RESTART_INC: u64 = 2;
+/*
 pub const LEARNTSIZE_FACTOR: f64 = 1.0 / 3.0;
 pub const LEARNTSIZE_INC: f64 = 1.3;
+*/
 
 #[derive(Debug)]
 pub struct Solver {
@@ -120,6 +122,7 @@ impl Solver {
         debug_assert_eq!(self.assignments[lit.var() as usize], Some(lit.val()));
       }
 
+      /*
       if self.restart_state.restart_suggested() {
         self.stats.record(Record::Restart);
         self.restart_state.restart();
@@ -129,6 +132,7 @@ impl Solver {
       if self.level == 0 {
         self.watch_list.remove_satisfied(&self.assignments);
       }
+      */
 
       /*
       if self.stats.clauses_learned + self.stats.transferred_clauses > (max_learnts as usize) {
@@ -149,17 +153,23 @@ impl Solver {
   /// Are still unassigned variables for this solver?
   pub fn has_unassigned_vars(&self) -> bool { self.assignment_trail.len() < self.assignments.len() }
   /// returns the reason for a var's assignment if it exists
-  pub fn reason(&self, var: usize) -> Option<&CRef> { self.causes[var].as_ref() }
+  pub fn reason(&self, var: u32) -> Option<&CRef> { self.causes[var as usize].as_ref() }
+
   /// Analyzes a conflict for a given variable
   fn analyze(&mut self, src_clause: &CRef, decision_level: u32) -> (CRef, u32) {
     // TODO convert this into a reused buffer
-    let learnt = &mut self.learnt_buf;
+    let mut learnt = replace(&mut self.learnt_buf, vec![]);
+    debug_assert!(learnt.is_empty());
 
-    let seen = &mut self.analyze_seen;
+    let mut seen = replace(
+      &mut self.analyze_seen,
+      HashMap::with_hasher(Default::default()),
+    );
+    assert!(seen.is_empty());
     let curr_len = self.assignment_trail.len() - 1;
     let var_state = &mut self.var_state;
     let trail = &self.assignment_trail;
-    let causes = &self.causes;
+    let reasons = &self.causes;
     let levels = &self.levels;
     let db = &self.database;
     let mut learn_until_uip =
@@ -192,7 +202,7 @@ impl Solver {
         let lit_on_path = trail[idx];
         // should have previously seen this assignment
         assert!(seen.remove(&lit_on_path.var()).is_some());
-        let conflict = causes[lit_on_path.var() as usize];
+        let conflict = reasons[lit_on_path.var() as usize];
         // self.reason(lit_on_path.var());
         let next_remaining: usize = (remaining + count).saturating_sub(1);
         (conflict, next_remaining, idx.saturating_sub(1), lit_on_path)
@@ -208,16 +218,25 @@ impl Solver {
     // add asserting literal
     learnt.push(!causes.3);
     seen.clear();
+    self.analyze_seen = seen;
+
     if learnt.len() == 1 {
       // backtrack to 0
-      return (self.database.add_clause(learnt.drain(..)), 0);
+      self.learnt_buf = learnt;
+      return (self.database.add_clause(self.learnt_buf.drain(..)), 0);
     }
     // get the first two items explicitly
     let mut levels = learnt.iter().map(|lit| levels[lit.var() as usize].unwrap());
     let curr_max = levels.next().unwrap();
     let mut others = levels.filter(|&lvl| lvl != curr_max);
     let (max, second) = match others.next() {
-      None => return (self.database.add_clause(learnt.drain(..)), curr_max),
+      None => {
+        self.learnt_buf = learnt;
+        return (
+          self.database.add_clause(self.learnt_buf.drain(..)),
+          curr_max,
+        );
+      },
       Some(lvl) if lvl > curr_max => (lvl, curr_max),
       Some(lvl) => (curr_max, lvl),
     };
@@ -229,7 +248,8 @@ impl Solver {
       Ordering::Equal => (max, second),
       Ordering::Less => (max, second.max(next)),
     });
-    (self.database.add_clause(learnt.drain(..)), second)
+    self.learnt_buf = learnt;
+    (self.database.add_clause(self.learnt_buf.drain(..)), second)
   }
   pub fn next_level(&mut self) -> u32 {
     self.level_indeces.push(self.assignment_trail.len());
@@ -248,8 +268,9 @@ impl Solver {
     for lit in self.assignment_trail.drain(index..) {
       let var = lit.var();
       assert_ne!(self.assignments[var as usize].take(), None);
-      assert_ne!(self.causes[var as usize].take(), None);
+      assert_ne!(self.levels[var as usize].take(), None);
       self.polarities[var as usize] = lit.val();
+      self.causes[var as usize].take();
       self.var_state.enable(var);
     }
     debug_assert_eq!(self.level_indeces.len(), lvl as usize);
@@ -264,11 +285,8 @@ impl Solver {
         assert!(lit.assn(&self.assignments).is_none());
         self.assignment_trail.push(lit);
         assert_eq!(self.levels[lit.var() as usize].replace(self.level), None);
-
-        assert_eq!(
-          self.assignments[lit.var() as usize].replace(lit.val()),
-          None
-        );
+        debug_assert_eq!(self.assignments[lit.var() as usize], None);
+        self.assignments[lit.var() as usize] = Some(lit.val());
         self
           .watch_list
           .set(lit, &self.assignments, &self.database, |c, l| {
@@ -284,7 +302,7 @@ impl Solver {
         Some(false) => return Some(cause),
       }
       self.assignment_trail.push(lit);
-      // self.stats.record(Record::Propogation);
+      self.stats.record(Record::Propogation);
       let var = lit.var() as usize;
       assert_eq!(self.causes[var].replace(cause), None);
       assert_eq!(self.levels[var].replace(self.level), None);
@@ -308,19 +326,19 @@ impl Solver {
     }
   }
 
-  /*
   /// checks whether a literal in a conflict clause is redundant
-  #[allow(dead_code)]
-  fn lit_redundant(&self, lit: Literal, seen: &mut HashMap<usize, SeenState>) -> bool {
+  fn lit_redundant(
+    &self,
+    lit: Literal,
+    seen: &mut HashMap<u32, SeenState, BuildHasherDefault<FxHasher>>,
+  ) -> bool {
     let cause = self.reason(lit.var()).unwrap();
-    let literals = cause.literals.iter().filter(|lit| {
-      self
-        .reason(lit.var())
-        .map_or(true, |reason| !Arc::ptr_eq(&reason.inner, &cause.inner))
-    });
+    let literals = cause
+      .iter(&self.database)
+      .filter(|l| self.reason(l.var()).map_or(true, |reason| reason == cause));
 
     for lit in literals {
-      let redundant = self.levels[lit.var()] == Some(0)
+      let redundant = self.levels[lit.var() as usize] == Some(0)
         || seen.get(&lit.var()).map_or(false, |&ss| {
           ss == SeenState::Source || ss == SeenState::Redundant
         });
@@ -337,10 +355,9 @@ impl Solver {
         return false;
       }
     }
-    seen.entry(lit.var()).or_insert(SeenState::Redundant);
+    seen.entry(lit.var() as u32).or_insert(SeenState::Redundant);
     true
   }
-  */
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -350,17 +367,18 @@ enum SeenState {
   Required,
 }
 
-use std::path::Path;
-use std::io;
-
 pub fn solver_from_dimacs<S: AsRef<Path>>(s: S) -> io::Result<Solver> {
   let mut db = Database::new();
   let crefs = crate::parser::from_dimacs_2(s, &mut db)?;
   let mut solver = Solver::new(db);
   for cref in crefs.into_iter() {
     let lit = solver.watch_list.watch(cref, &solver.database);
-    if lit.is_valid() {
-      assert_eq!(solver.with(lit, Some(cref)), None, "UNSAT from initial conditions");
+    if let Some(lit) = lit {
+      assert_eq!(
+        solver.with(lit, Some(cref)),
+        None,
+        "UNSAT from initial conditions"
+      );
     }
   }
   Ok(solver)

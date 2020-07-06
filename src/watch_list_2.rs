@@ -15,7 +15,7 @@ impl WatchList {
       occs: vec![HashMap::with_hasher(Default::default()); (vars as usize) << 1],
     }
   }
-  pub fn watch(&mut self, cref: CRef, db: &Database) -> Literal {
+  pub fn watch(&mut self, cref: CRef, db: &Database) -> Option<Literal> {
     let mut lits = cref.iter(db).take(2);
     let l_0 = match lits.next() {
       None => panic!("Empty clause passed to watch"),
@@ -23,9 +23,9 @@ impl WatchList {
     };
     if let Some(&l_1) = lits.next() {
       self.add_clause_with_lits(cref, l_0, l_1);
-      Literal::INVALID
+      None
     } else {
-      l_0
+      Some(l_0)
     }
   }
   pub fn set<CB>(&mut self, l_0: Literal, assns: &[Option<bool>], db: &Database, cb: CB)
@@ -37,13 +37,15 @@ impl WatchList {
   pub fn set_false<CB>(&mut self, l_0: Literal, assns: &[Option<bool>], db: &Database, mut cb: CB)
   where
     CB: FnMut(CRef, Literal), {
+    // TODO move this into the struct so that no work needs to be done
     let temp = HashMap::with_hasher(Default::default());
+
     let mut set_map = replace(&mut self.occs[l_0.raw() as usize], temp);
     let occs = &mut self.occs;
     let out = set_map.drain_filter(move |&cref, &mut l_1| {
       assert_ne!(l_0, l_1);
-      if Some(true) == l_1.assn(assns) {
-        // debug_assert_eq!(&self.occs[l_1.raw() as usize][&cref], &l_0);
+      if l_1.assn(assns) == Some(true) {
+        debug_assert_eq!(&occs[l_1.raw() as usize][&cref], &l_0);
         return true;
       }
       let mut next = None;
@@ -51,34 +53,37 @@ impl WatchList {
         match l.assn(assns) {
           Some(false) => (),
           Some(true) => {
-            next.replace(l);
+            next = Some(l);
             break;
           },
-          None => {
-            next.replace(l);
-          },
+          None => next = Some(l),
         }
       }
-      let next = if let Some(next) = next {
-        next
+      if let Some(next) = next {
+        debug_assert_ne!(next, l_1);
+        debug_assert_ne!(next, l_0);
+        // TODO convert these to unchecked
+        *occs[l_1.raw() as usize].get_mut(&cref).unwrap() = next;
+        occs[next.raw() as usize].insert(cref, l_1);
+        debug_assert_eq!(occs[next.raw() as usize][&cref], l_1);
+        debug_assert_eq!(occs[l_1.raw() as usize][&cref], next);
+        debug_assert!(next.assn(assns) != Some(false));
+        false
       } else {
-        return false;
-      };
-      // TODO convert these to unchecked
-      *occs[l_1.raw() as usize].get_mut(&cref).unwrap() = next;
-      occs[next.raw() as usize].insert(cref, l_1);
-      true
+        debug_assert_eq!(occs[l_1.raw() as usize][&cref], l_0);
+        cb(cref, l_1);
+        true
+      }
     });
-    for (c, l) in out {
-      cb(c, l);
-    }
+    for _ in out {}
+    debug_assert!(self.occs[l_0.raw() as usize].is_empty());
     self.occs[l_0.raw() as usize] = set_map;
   }
   fn add_clause_with_lits(&mut self, c: CRef, l_0: Literal, l_1: Literal) {
-    let none_evicted = self.occs[l_0.raw() as usize].insert(c, l_1).is_none();
-    debug_assert!(none_evicted);
-    let none_evicted = self.occs[l_0.raw() as usize].insert(c, l_1).is_none();
-    debug_assert!(none_evicted);
+    let evicted = self.occs[l_0.raw() as usize].insert(c, l_1);
+    debug_assert!(evicted.is_none());
+    let evicted = self.occs[l_1.raw() as usize].insert(c, l_0);
+    debug_assert!(evicted.is_none());
   }
   pub fn add_learnt(&mut self, assns: &[Option<bool>], cref: CRef, db: &Database) -> Literal {
     if cref.len() == 1 {
@@ -95,7 +100,7 @@ impl WatchList {
     let (unassn, false_lit) = if is_unassn {
       (l_0, *lits.find(|l| l.assn(&assns) == Some(false)).unwrap())
     } else {
-      (*lits.find(|l| l.assn(&assns).is_none()).unwrap(), l_0)
+      (*lits.find(|l| l.assn(&assns) == None).unwrap(), l_0)
     };
     if let Entry::Vacant(v) = self.occs[unassn.raw() as usize].entry(cref) {
       v.insert(false_lit);
@@ -119,11 +124,11 @@ impl WatchList {
       }
     }
   }
-  pub fn drain(&mut self) -> impl Iterator<Item=(Literal, Literal, CRef)> + '_ {
+  pub fn drain(&mut self) -> impl Iterator<Item = (Literal, Literal, CRef)> + '_ {
     self.occs.iter_mut().enumerate().flat_map(|(l_0, watches)| {
-      watches.drain().map(move |(cref, l_1)| {
-        (Literal::from(l_0 as u32), l_1, cref)
-      })
+      watches
+        .drain()
+        .map(move |(cref, l_1)| (Literal::from(l_0 as u32), l_1, cref))
     })
   }
 }
