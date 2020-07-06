@@ -8,6 +8,7 @@ pub struct CRef {
 }
 
 impl CRef {
+  // TODO convert this to return literals instead of references
   pub fn iter<'a>(&'a self, db: &'a Database) -> impl Iterator<Item = &Literal> + 'a {
     db.literals[self.idx as usize..(self.idx + self.len as u32) as usize].iter()
   }

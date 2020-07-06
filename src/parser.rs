@@ -5,6 +5,7 @@ use std::{
   path::Path,
 };
 
+// TODO might need to eventually convert this into a streaming
 pub fn from_dimacs_2<S: AsRef<Path>>(s: S, db: &mut Database) -> io::Result<Vec<CRef>> {
   let file = File::open(s)?;
   let buf_reader = BufReader::new(file);
@@ -28,7 +29,10 @@ pub fn from_dimacs_2<S: AsRef<Path>>(s: S, db: &mut Database) -> io::Result<Vec<
     for v in l.split_whitespace() {
       let v = v.parse::<i32>().expect("Failed to parse literal");
       if v == 0 {
-        out.push(db.add_clause(buf.drain(..)));
+        assert!(!buf.is_empty(), "Empty clause in input");
+        let cref = db.add_clause(buf.drain(..));
+        out.push(cref);
+        assert!(buf.is_empty());
       } else {
         let l = Literal::from(v);
         assert!(

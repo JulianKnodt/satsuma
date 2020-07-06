@@ -22,6 +22,7 @@ impl WatchList {
       Some(&lit) => lit,
     };
     if let Some(&l_1) = lits.next() {
+      assert_ne!(l_0, l_1, "Attempted to watch clause with repeated literals {}", l_0);
       self.add_clause_with_lits(cref, l_0, l_1);
       None
     } else {

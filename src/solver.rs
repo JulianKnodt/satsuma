@@ -122,7 +122,6 @@ impl Solver {
         debug_assert_eq!(self.assignments[lit.var() as usize], Some(lit.val()));
       }
 
-      /*
       if self.restart_state.restart_suggested() {
         self.stats.record(Record::Restart);
         self.restart_state.restart();
@@ -132,7 +131,6 @@ impl Solver {
       if self.level == 0 {
         self.watch_list.remove_satisfied(&self.assignments);
       }
-      */
 
       /*
       if self.stats.clauses_learned + self.stats.transferred_clauses > (max_learnts as usize) {
@@ -372,6 +370,7 @@ pub fn solver_from_dimacs<S: AsRef<Path>>(s: S) -> io::Result<Solver> {
   let crefs = crate::parser::from_dimacs_2(s, &mut db)?;
   let mut solver = Solver::new(db);
   for cref in crefs.into_iter() {
+    // TODO figure out why this is breaking for larger files
     let lit = solver.watch_list.watch(cref, &solver.database);
     if let Some(lit) = lit {
       assert_eq!(

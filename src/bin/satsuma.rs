@@ -13,15 +13,17 @@ fn main() {
         .value_name("DIMACs")
         .help("The input DIMACs file")
         .required(true)
-        .takes_value(true),
+        .takes_value(true)
+        .multiple(true),
     )
     .get_matches();
-  let file_name = matches.value_of("input").unwrap();
-  let mut solver = solver_from_dimacs(file_name).expect("Failed to create solver");
-  let has_solution = solver.solve();
-  if has_solution {
-    println!("SAT");
-  } else {
-    println!("UNSAT");
+  for file_name in matches.values_of("input").unwrap(){
+    let mut solver = solver_from_dimacs(file_name).expect("Failed to create solver");
+    let has_solution = solver.solve();
+    if has_solution {
+      println!("{} SAT", file_name);
+    } else {
+      println!("{} UNSAT", file_name);
+    }
   }
 }
