@@ -78,36 +78,6 @@ impl Solver {
       seen_stack: vec![],
     }
   }
-  pub fn resize(&mut self, max_vars: u32) {
-    self.assignments.resize(max_vars as usize, None);
-    self.levels.resize(max_vars as usize, None);
-    self.causes.resize(max_vars as usize, None);
-    self.polarities.resize(max_vars as usize, false);
-
-    self.watch_list.resize(max_vars);
-
-    self.var_state.resize(max_vars);
-  }
-  pub fn clear(&mut self) {
-    self.assignments.clear();
-    self.assignment_trail.clear();
-    self.level_indeces.clear();
-    self.levels.clear();
-    self.causes.clear();
-    self.watch_list.clear();
-    self.database.clear();
-    self.polarities.clear();
-    self.var_state.clear();
-    self.level = 0;
-    self.restart_state = RestartState::new(RESTART_BASE, RESTART_INC);
-
-    self.analyze_seen.clear();
-    self.stats = Stats::new();
-    self.learnt_buf.clear();
-    self.unit_buf.clear();
-    self.cref_buf.clear();
-    self.seen_stack.clear();
-  }
   /// Attempt to find a satisfying assignment for the current solver.
   /// Returning true if there is a solution found.
   pub fn solve(&mut self) -> bool {
@@ -414,19 +384,18 @@ impl Solver {
       // TODO need to convert this into a slice so it looks cleaner or an iterator
       for i in i..curr.len() as u32 {
         let to_check = unsafe { *curr.get_unchecked(i as usize) };
-        if to_check == lit
-          || self.levels[to_check.var() as usize] == Some(0)
-          || seen.get(&to_check.var()).map_or(false, |&ss| {
-            ss == SeenState::Source || ss == SeenState::Redundant
-          })
-        {
+        let level_0 = self.levels[to_check.var() as usize] == Some(0);
+        let previously_redundant = seen.get(&to_check.var()).map_or(false, |&ss| {
+          ss == SeenState::Source || ss == SeenState::Redundant
+        });
+        if to_check == lit || level_0 || previously_redundant {
           continue;
         }
-        if self.reason(to_check.var()).is_none()
-          || seen
-            .get(&to_check.var())
-            .map_or(false, |&ss| ss == SeenState::Required)
-        {
+        let no_previous_reason = self.reason(to_check.var()).is_none();
+        let required = seen
+          .get(&to_check.var())
+          .map_or(false, |&ss| ss == SeenState::Required);
+        if no_previous_reason || required {
           seen.entry(lit.var()).or_insert(SeenState::Required);
           for (_, lit) in seen_stack.drain(..) {
             seen.entry(lit.var()).or_insert(SeenState::Required);
@@ -458,6 +427,37 @@ impl Solver {
     self.cref_buf = cref_buf;
     Ok(true)
   }
+
+  pub fn resize(&mut self, max_vars: u32) {
+    self.assignments.resize(max_vars as usize, None);
+    self.levels.resize(max_vars as usize, None);
+    self.causes.resize(max_vars as usize, None);
+    self.polarities.resize(max_vars as usize, false);
+
+    self.watch_list.resize(max_vars);
+
+    self.var_state.resize(max_vars);
+  }
+  pub fn clear(&mut self) {
+    self.assignments.clear();
+    self.assignment_trail.clear();
+    self.level_indeces.clear();
+    self.levels.clear();
+    self.causes.clear();
+    self.watch_list.clear();
+    self.database.clear();
+    self.polarities.clear();
+    self.var_state.clear();
+    self.level = 0;
+    self.restart_state = RestartState::new(RESTART_BASE, RESTART_INC);
+
+    self.analyze_seen.clear();
+    self.stats = Stats::new();
+    self.learnt_buf.clear();
+    self.unit_buf.clear();
+    self.cref_buf.clear();
+    self.seen_stack.clear();
+  }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -465,4 +465,8 @@ enum SeenState {
   Source,
   Redundant,
   Required,
+}
+
+impl Default for Solver {
+  fn default() -> Self { Self::new() }
 }

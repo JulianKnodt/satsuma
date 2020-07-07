@@ -84,3 +84,7 @@ impl VariableState {
     }
   }
 }
+
+impl Default for VariableState {
+  fn default() -> Self { Self::new() }
+}
