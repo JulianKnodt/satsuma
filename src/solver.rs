@@ -145,12 +145,20 @@ impl Solver {
         let new_crefs = self
           .database
           .compact(&self.assignments, self.cref_buf.drain(..));
+        self.unit_buf.clear();
         for (cref, l_0, l_1) in new_crefs {
+          if !l_1.is_valid() {
+            self.unit_buf.push((cref, l_0));
+            continue
+          }
           let unit = self.watch_list.watch_with_lits(cref, l_0, l_1);
           assert!(
             unit.is_none(),
             "INTERNAL ERROR there shouldn't be any unit clauses when compacting"
           );
+        }
+        if self.with_units_from_buf().is_some() {
+          return false
         }
         max_learnts *= LEARNTSIZE_INC;
       }
@@ -321,6 +329,10 @@ impl Solver {
       },
       Some(cause) => units.push((cause, lit)),
     };
+    self.with_units_from_buf()
+  }
+  fn with_units_from_buf(&mut self) -> Option<CRef> {
+    let units = &mut self.unit_buf;
     while let Some((cause, lit)) = units.pop() {
       match lit.assn(&self.assignments) {
         Some(true) => continue,

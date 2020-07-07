@@ -93,7 +93,12 @@ impl Database {
       if len == 0 {
         None
       } else if len == 1 {
-        panic!("INTERNAL ERROR no idea how to handle this case yet.");
+        self.num_clauses += 1;
+        let cref = CRef { idx, len };
+        let mut lits = cref.iter(&self).copied();
+        let l_0 = lits.next().unwrap();
+        debug_assert!(l_0.is_valid());
+        Some((cref, l_0, Literal::INVALID))
       } else {
         self.num_clauses += 1;
         let cref = CRef { idx, len };
