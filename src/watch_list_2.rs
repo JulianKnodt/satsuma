@@ -1,5 +1,5 @@
 use crate::{CRef, Database, Literal};
-use hashbrown::HashMap;
+use hashbrown::{hash_map::Entry, HashMap};
 use rustc_hash::FxHasher;
 use std::{hash::BuildHasherDefault, mem::replace};
 
@@ -116,9 +116,7 @@ impl WatchList {
   }
   pub fn add_learnt(&mut self, assns: &[Option<bool>], cref: CRef, db: &Database) -> Literal {
     if cref.len() == 1 {
-      return unsafe {
-        *cref.as_slice(&db).get_unchecked(0)
-      };
+      return unsafe { *cref.as_slice(&db).get_unchecked(0) };
     }
     let mut lits = cref.iter(db);
     let (l_0, is_unassn) = lits
@@ -133,10 +131,11 @@ impl WatchList {
     } else {
       (*lits.find(|l| l.assn(&assns) == None).unwrap(), l_0)
     };
-    let prev = self.occs[unassn.raw() as usize].insert(cref, false_lit);
-    debug_assert_ne!(prev, None);
-    let prev = self.occs[false_lit.raw() as usize].insert(cref, unassn);
-    debug_assert!(prev.is_none());
+    if let Entry::Vacant(v) = self.occs[unassn.raw() as usize].entry(cref) {
+      v.insert(false_lit);
+      let prev = self.occs[false_lit.raw() as usize].insert(cref, unassn);
+      debug_assert!(prev.is_none());
+    }
     unassn
   }
   pub fn remove_satisfied(&mut self, assns: &[Option<bool>]) {

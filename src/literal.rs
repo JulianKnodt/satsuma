@@ -19,7 +19,13 @@ impl Literal {
   pub const fn new(var: u32, negated: bool) -> Self { Self((var << 1) | (negated as u32)) }
   /// returns the value for this literal given these assignments
   pub fn assn(self, assignments: &[Option<bool>]) -> Option<bool> {
-    assignments[self.var() as usize].map(|val| self.negated() ^ val)
+    unsafe {
+      // made this unsafe for efficiency
+      debug_assert!(assignments.len() > self.var() as usize);
+      assignments
+        .get_unchecked(self.var() as usize)
+        .map(|val| self.negated() ^ val)
+    }
   }
   /// Returns the variable for this literal as a usize
   /// for convenient indexing
@@ -71,6 +77,11 @@ mod test {
 
 impl Display for Literal {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "{}{}", if self.negated() { "!" } else { "" }, self.var())
+    write!(
+      f,
+      "{}{}",
+      if self.negated() { "-" } else { "" },
+      self.var() + 1
+    )
   }
 }

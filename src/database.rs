@@ -14,7 +14,9 @@ impl CRef {
   #[inline]
   pub fn as_slice<'a>(&'a self, db: &'a Database) -> &'a [Literal] {
     unsafe {
-      &db.literals.get_unchecked(self.idx as usize..(self.idx + self.len as u32) as usize)
+      &db
+        .literals
+        .get_unchecked(self.idx as usize..(self.idx + self.len as u32) as usize)
     }
   }
   pub const fn len(&self) -> usize { self.len as usize }
@@ -76,7 +78,9 @@ impl Database {
         return None;
       }
       let lits = unsafe {
-        &self.swap_space.get_unchecked(c.idx as usize..c.idx as usize + c.len as usize)
+        &self
+          .swap_space
+          .get_unchecked(c.idx as usize..c.idx as usize + c.len as usize)
       };
       if lits.iter().any(|l| l.assn(assns) == Some(true)) {
         return None;
