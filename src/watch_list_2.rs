@@ -62,7 +62,12 @@ impl WatchList {
     // TODO move this into the struct so that no work needs to be done
     let temp = HashMap::with_hasher(Default::default());
 
-    let mut set_map = replace(&mut self.occs[l_0.raw() as usize], temp);
+    let mut set_map = unsafe {
+      debug_assert!(self.occs.len() > l_0.raw() as usize);
+      // unsafe access for speed
+      let set_map = self.occs.get_unchecked_mut(l_0.raw() as usize);
+      replace(set_map, temp)
+    };
     let occs = &mut self.occs;
     let out = set_map.drain_filter(move |&cref, &mut l_1| {
       debug_assert_ne!(l_0, l_1);
@@ -99,7 +104,9 @@ impl WatchList {
     });
     for _ in out {}
     debug_assert!(self.occs[l_0.raw() as usize].is_empty());
-    self.occs[l_0.raw() as usize] = set_map;
+    unsafe {
+      *self.occs.get_unchecked_mut(l_0.raw() as usize) = set_map;
+    }
   }
   fn add_clause_with_lits(&mut self, c: CRef, l_0: Literal, l_1: Literal) {
     let evicted = self.occs[l_0.raw() as usize].insert(c, l_1);
@@ -109,7 +116,9 @@ impl WatchList {
   }
   pub fn add_learnt(&mut self, assns: &[Option<bool>], cref: CRef, db: &Database) -> Literal {
     if cref.len() == 1 {
-      return *cref.iter(&db).next().unwrap();
+      return unsafe {
+        *cref.as_slice(&db).get_unchecked(0)
+      };
     }
     let mut lits = cref.iter(db);
     let (l_0, is_unassn) = lits
@@ -135,8 +144,7 @@ impl WatchList {
       if watches.is_empty() {
         continue;
       }
-      let l_0 = Literal::from(l_0 as u32);
-      if l_0.assn(assns) == Some(true) {
+      if Literal::from(l_0 as u32).assn(assns) == Some(true) {
         watches.clear();
       } else {
         watches.retain(|_, l_1| l_1.assn(assns) != Some(true));

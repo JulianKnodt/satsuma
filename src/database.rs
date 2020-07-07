@@ -13,7 +13,9 @@ impl CRef {
   }
   #[inline]
   pub fn as_slice<'a>(&'a self, db: &'a Database) -> &'a [Literal] {
-    &db.literals[self.idx as usize..(self.idx + self.len as u32) as usize]
+    unsafe {
+      &db.literals.get_unchecked(self.idx as usize..(self.idx + self.len as u32) as usize)
+    }
   }
   pub const fn len(&self) -> usize { self.len as usize }
   pub const fn is_empty(&self) -> bool { self.len == 0 }
@@ -73,7 +75,9 @@ impl Database {
       if !self.swap_space[c.idx as usize].is_valid() {
         return None;
       }
-      let lits = &self.swap_space[c.idx as usize..c.idx as usize + c.len as usize];
+      let lits = unsafe {
+        &self.swap_space.get_unchecked(c.idx as usize..c.idx as usize + c.len as usize)
+      };
       if lits.iter().any(|l| l.assn(assns) == Some(true)) {
         return None;
       }
