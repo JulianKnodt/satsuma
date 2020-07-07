@@ -17,6 +17,7 @@ default = ["clap"]
 
 [profile.release]
 lto = true
+codegen-units=1
 
 [[bin]]
 name = "satsuma"

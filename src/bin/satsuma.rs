@@ -17,7 +17,7 @@ fn main() {
         .multiple(true),
     )
     .get_matches();
-  for file_name in matches.values_of("input").unwrap(){
+  for file_name in matches.values_of("input").unwrap() {
     let mut solver = solver_from_dimacs(file_name).expect("Failed to create solver");
     let has_solution = solver.solve();
     if has_solution {

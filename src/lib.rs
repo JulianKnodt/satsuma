@@ -10,7 +10,7 @@ mod luby;
 pub use luby::RestartState;
 pub mod parser;
 mod stats;
-pub use stats::{Record, Stats};
+pub use stats::Stats;
 mod var_state;
 pub use var_state::VariableState;
 mod watch_list_2;

@@ -1,5 +1,5 @@
 use crate::{CRef, Database, Literal};
-use hashbrown::{hash_map::Entry, HashMap};
+use hashbrown::HashMap;
 use rustc_hash::FxHasher;
 use std::{hash::BuildHasherDefault, mem::replace};
 
@@ -18,15 +18,36 @@ impl WatchList {
   pub fn watch(&mut self, cref: CRef, db: &Database) -> Option<Literal> {
     let mut lits = cref.iter(db).take(2);
     let l_0 = match lits.next() {
+      // TODO make this unreachable?
       None => panic!("Empty clause passed to watch"),
       Some(&lit) => lit,
     };
     if let Some(&l_1) = lits.next() {
-      assert_ne!(l_0, l_1, "Attempted to watch clause with repeated literals {}", l_0);
+      assert_ne!(
+        l_0, l_1,
+        "Attempted to watch clause with repeated literals {}",
+        l_0
+      );
       self.add_clause_with_lits(cref, l_0, l_1);
       None
     } else {
       Some(l_0)
+    }
+  }
+  /// Watches a clause with two literals, assuming the literals are inside the clause
+  pub(crate) fn watch_with_lits(
+    &mut self,
+    cref: CRef,
+    l_0: Literal,
+    l_1: Literal,
+  ) -> Option<Literal> {
+    assert!(l_0.is_valid());
+    if !l_1.is_valid() {
+      Some(l_0)
+    } else {
+      debug_assert_ne!(l_0, l_1);
+      self.add_clause_with_lits(cref, l_0, l_1);
+      None
     }
   }
   pub fn set<CB>(&mut self, l_0: Literal, assns: &[Option<bool>], db: &Database, cb: CB)
@@ -44,7 +65,7 @@ impl WatchList {
     let mut set_map = replace(&mut self.occs[l_0.raw() as usize], temp);
     let occs = &mut self.occs;
     let out = set_map.drain_filter(move |&cref, &mut l_1| {
-      assert_ne!(l_0, l_1);
+      debug_assert_ne!(l_0, l_1);
       if l_1.assn(assns) == Some(true) {
         debug_assert_eq!(&occs[l_1.raw() as usize][&cref], &l_0);
         return true;
@@ -103,13 +124,10 @@ impl WatchList {
     } else {
       (*lits.find(|l| l.assn(&assns) == None).unwrap(), l_0)
     };
-    if let Entry::Vacant(v) = self.occs[unassn.raw() as usize].entry(cref) {
-      v.insert(false_lit);
-      let prev = self.occs[false_lit.raw() as usize].insert(cref, unassn);
-      debug_assert!(prev.is_none());
-    } else {
-      panic!("unexpected testing to see if this is reached");
-    }
+    let prev = self.occs[unassn.raw() as usize].insert(cref, false_lit);
+    debug_assert_ne!(prev, None);
+    let prev = self.occs[false_lit.raw() as usize].insert(cref, unassn);
+    debug_assert!(prev.is_none());
     unassn
   }
   pub fn remove_satisfied(&mut self, assns: &[Option<bool>]) {

@@ -1,14 +1,12 @@
-use crate::{CRef, Database, Literal, Record, RestartState, Stats, VariableState, WatchList};
+use crate::{CRef, Database, Literal, RestartState, Stats, VariableState, WatchList};
 use hashbrown::{hash_map::Entry, HashMap};
 use rustc_hash::FxHasher;
 use std::{hash::BuildHasherDefault, io, mem::replace, path::Path};
 
 pub const RESTART_BASE: u64 = 100;
 pub const RESTART_INC: u64 = 2;
-/*
-pub const LEARNTSIZE_FACTOR: f64 = 1.0 / 3.0;
-pub const LEARNTSIZE_INC: f64 = 1.3;
-*/
+pub const LEARNTSIZE_FACTOR: f32 = 1.0 / 3.0;
+pub const LEARNTSIZE_INC: f32 = 1.3;
 
 #[derive(Debug)]
 pub struct Solver {
@@ -47,13 +45,13 @@ pub struct Solver {
   // a reusable tracker for what was seen and what was not
   // should be clear before and after each call to analyze
   analyze_seen: HashMap<u32, SeenState, BuildHasherDefault<FxHasher>>,
-  /*
-   */
+
   /// Statistics for this solver
   pub stats: Stats,
 
   learnt_buf: Vec<Literal>,
   unit_buf: Vec<(CRef, Literal)>,
+  cref_buf: Vec<CRef>,
 }
 
 impl Solver {
@@ -76,13 +74,14 @@ impl Solver {
       stats: Stats::new(),
       learnt_buf: vec![],
       unit_buf: vec![],
+      cref_buf: vec![],
     }
   }
   /// Attempt to find a satisfying assignment for the current solver.
   /// Returning true if there is a solution found.
   pub fn solve(&mut self) -> bool {
     assert_eq!(self.level, 0);
-    // let mut max_learnts = (self.db.initial().len() as f64) * LEARNTSIZE_FACTOR;
+    let mut max_learnts = (self.database.num_clauses as f32) * LEARNTSIZE_FACTOR;
 
     while self.has_unassigned_vars() {
       self.next_level();
@@ -97,18 +96,17 @@ impl Solver {
         if self.level == 0 {
           return false;
         }
-        self.stats.record(Record::LearnedClause);
+        self.stats.record_learned_clause();
         let (learnt_clause, backtrack_lvl) = self.analyze(&clause, self.level);
         debug_assert!(backtrack_lvl < self.level);
         self.backtrack_to(backtrack_lvl);
         if learnt_clause.is_empty() {
           return false;
         }
-        /*
+
         self
           .stats
-          .record(Record::LearntLiterals(learnt_clause.literals.len()));
-        */
+          .record_learnt_literals(learnt_clause.len() as u32);
 
         let lit = self
           .watch_list
@@ -123,7 +121,7 @@ impl Solver {
       }
 
       if self.restart_state.restart_suggested() {
-        self.stats.record(Record::Restart);
+        self.stats.record_restart();
         self.restart_state.restart();
         self.backtrack_to(0);
       }
@@ -132,12 +130,28 @@ impl Solver {
         self.watch_list.remove_satisfied(&self.assignments);
       }
 
-      /*
-      if self.stats.clauses_learned + self.stats.transferred_clauses > (max_learnts as usize) {
-        self.watch_list.clean(&self.assignments, &self.causes);
+      if self.level == 0 && self.stats.clauses_learned > (max_learnts as usize) {
+        let crefs = self.watch_list.drain().filter_map(|(l_0, l_1, cref)| {
+          debug_assert_ne!(l_0, l_1);
+          if l_0 < l_1 {
+            Some(cref)
+          } else {
+            None
+          }
+        });
+        self.cref_buf.extend(crefs);
+        let new_crefs = self
+          .database
+          .compact(&self.assignments, self.cref_buf.drain(..));
+        for (cref, l_0, l_1) in new_crefs {
+          let unit = self.watch_list.watch_with_lits(cref, l_0, l_1);
+          assert!(
+            unit.is_none(),
+            "INTERNAL ERROR there shouldn't be any unit clauses when compacting"
+          );
+        }
         max_learnts *= LEARNTSIZE_INC;
       }
-      */
     }
     true
   }
@@ -145,7 +159,10 @@ impl Solver {
   /// gets the final assignments for this solver
   /// panics if any variable is still null.
   pub fn final_assignments(&self) -> &[Option<bool>] {
-    assert!(!self.has_unassigned_vars());
+    assert!(
+      !self.has_unassigned_vars(),
+      "There is no final assignment while there are unassigned variables"
+    );
     &self.assignments
   }
   /// Are still unassigned variables for this solver?
@@ -155,7 +172,6 @@ impl Solver {
 
   /// Analyzes a conflict for a given variable
   fn analyze(&mut self, src_clause: &CRef, decision_level: u32) -> (CRef, u32) {
-    // TODO convert this into a reused buffer
     let mut learnt = replace(&mut self.learnt_buf, vec![]);
     debug_assert!(learnt.is_empty());
 
@@ -163,7 +179,7 @@ impl Solver {
       &mut self.analyze_seen,
       HashMap::with_hasher(Default::default()),
     );
-    assert!(seen.is_empty());
+    debug_assert!(seen.is_empty());
     let curr_len = self.assignment_trail.len() - 1;
     let var_state = &mut self.var_state;
     let trail = &self.assignment_trail;
@@ -199,9 +215,9 @@ impl Solver {
         }
         let lit_on_path = trail[idx];
         // should have previously seen this assignment
-        assert!(seen.remove(&lit_on_path.var()).is_some());
+        let prev_seen = seen.remove(&lit_on_path.var());
+        debug_assert!(prev_seen.is_some());
         let conflict = reasons[lit_on_path.var() as usize];
-        // self.reason(lit_on_path.var());
         let next_remaining: usize = (remaining + count).saturating_sub(1);
         (conflict, next_remaining, idx.saturating_sub(1), lit_on_path)
       };
@@ -221,7 +237,9 @@ impl Solver {
     if learnt.len() == 1 {
       // backtrack to 0
       self.learnt_buf = learnt;
-      return (self.database.add_clause(self.learnt_buf.drain(..)), 0);
+      let cref = self.database.add_clause_from_slice(&self.learnt_buf);
+      self.learnt_buf.clear();
+      return (cref, 0);
     }
     // get the first two items explicitly
     let mut levels = learnt.iter().map(|lit| levels[lit.var() as usize].unwrap());
@@ -230,10 +248,9 @@ impl Solver {
     let (max, second) = match others.next() {
       None => {
         self.learnt_buf = learnt;
-        return (
-          self.database.add_clause(self.learnt_buf.drain(..)),
-          curr_max,
-        );
+        let cref = self.database.add_clause_from_slice(&self.learnt_buf);
+        self.learnt_buf.clear();
+        return (cref, curr_max);
       },
       Some(lvl) if lvl > curr_max => (lvl, curr_max),
       Some(lvl) => (curr_max, lvl),
@@ -247,7 +264,9 @@ impl Solver {
       Ordering::Less => (max, second.max(next)),
     });
     self.learnt_buf = learnt;
-    (self.database.add_clause(self.learnt_buf.drain(..)), second)
+    let cref = self.database.add_clause_from_slice(&self.learnt_buf);
+    self.learnt_buf.clear();
+    (cref, second)
   }
   pub fn next_level(&mut self) -> u32 {
     self.level_indeces.push(self.assignment_trail.len());
@@ -265,10 +284,12 @@ impl Solver {
     self.level_indeces.truncate(lvl as usize);
     for lit in self.assignment_trail.drain(index..) {
       let var = lit.var();
-      assert_ne!(self.assignments[var as usize].take(), None);
-      assert_ne!(self.levels[var as usize].take(), None);
+      let prev_assn = self.assignments[var as usize].take();
+      debug_assert_ne!(prev_assn, None);
+      let prev_level = self.levels[var as usize].take();
+      debug_assert_ne!(prev_level, None);
       self.polarities[var as usize] = lit.val();
-      self.causes[var as usize].take();
+      self.causes[var as usize] = None;
       self.var_state.enable(var);
     }
     debug_assert_eq!(self.level_indeces.len(), lvl as usize);
@@ -280,9 +301,10 @@ impl Solver {
     match cause {
       // In the case there was no previous cause, we need to do one iteration
       None => {
-        assert!(lit.assn(&self.assignments).is_none());
+        debug_assert!(lit.assn(&self.assignments).is_none());
         self.assignment_trail.push(lit);
-        assert_eq!(self.levels[lit.var() as usize].replace(self.level), None);
+        let prev_level = self.levels[lit.var() as usize].replace(self.level);
+        debug_assert_eq!(prev_level, None);
         debug_assert_eq!(self.assignments[lit.var() as usize], None);
         self.assignments[lit.var() as usize] = Some(lit.val());
         self
@@ -300,11 +322,14 @@ impl Solver {
         Some(false) => return Some(cause),
       }
       self.assignment_trail.push(lit);
-      self.stats.record(Record::Propogation);
+      self.stats.record_propogation();
       let var = lit.var() as usize;
-      assert_eq!(self.causes[var].replace(cause), None);
-      assert_eq!(self.levels[var].replace(self.level), None);
-      assert_eq!(self.assignments[var].replace(lit.val()), None);
+      let prev_cause = self.causes[var].replace(cause);
+      debug_assert_eq!(prev_cause, None);
+      let prev_level = self.levels[var].replace(self.level);
+      debug_assert_eq!(prev_level, None);
+      let prev_assn = self.assignments[var].replace(lit.val());
+      debug_assert_eq!(prev_assn, None);
       self
         .watch_list
         .set(lit, &self.assignments, &self.database, |c, l| {
@@ -367,12 +392,13 @@ enum SeenState {
 
 pub fn solver_from_dimacs<S: AsRef<Path>>(s: S) -> io::Result<Solver> {
   let mut db = Database::new();
-  let crefs = crate::parser::from_dimacs_2(s, &mut db)?;
+  let mut crefs = crate::parser::from_dimacs_2(s, &mut db)?;
   let mut solver = Solver::new(db);
-  for cref in crefs.into_iter() {
-    // TODO figure out why this is breaking for larger files
+  for cref in crefs.drain(..) {
+    // TODO handle repeated but not consecutive elements
     let lit = solver.watch_list.watch(cref, &solver.database);
     if let Some(lit) = lit {
+      // TODO make this not just throw but do something nicer
       assert_eq!(
         solver.with(lit, Some(cref)),
         None,
@@ -380,5 +406,6 @@ pub fn solver_from_dimacs<S: AsRef<Path>>(s: S) -> io::Result<Solver> {
       );
     }
   }
+  solver.cref_buf = crefs;
   Ok(solver)
 }
