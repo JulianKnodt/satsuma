@@ -85,18 +85,23 @@ impl Database {
       if lits.iter().any(|l| l.assn(assns) == Some(true)) {
         return None;
       }
+      let lits = lits.iter().filter(|l| l.assn(assns) == None);
       let idx = self.literals.len() as u32;
-      self.literals.extend_from_slice(lits);
+      self.literals.extend(lits);
       let len = (self.literals.len() as u32 - idx) as u16;
       self.swap_space[c.idx as usize] = Literal::INVALID;
       if len == 0 {
         None
+      } else if len == 1 {
+        panic!("INTERNAL ERROR no idea how to handle this case yet.");
       } else {
         self.num_clauses += 1;
         let cref = CRef { idx, len };
         let mut lits = cref.iter(&self).copied();
-        let l_0 = lits.next().unwrap_or(Literal::INVALID);
-        let l_1 = lits.next().unwrap_or(Literal::INVALID);
+        let l_0 = lits.next().unwrap();
+        let l_1 = lits.next().unwrap();
+        debug_assert!(l_0.is_valid());
+        debug_assert!(l_1.is_valid());
         Some((cref, l_0, l_1))
       }
     })

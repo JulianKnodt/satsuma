@@ -41,14 +41,11 @@ impl WatchList {
     l_0: Literal,
     l_1: Literal,
   ) -> Option<Literal> {
-    assert!(l_0.is_valid());
-    if !l_1.is_valid() {
-      Some(l_0)
-    } else {
-      debug_assert_ne!(l_0, l_1);
-      self.add_clause_with_lits(cref, l_0, l_1);
-      None
-    }
+    debug_assert!(l_0.is_valid());
+    debug_assert!(l_1.is_valid());
+    debug_assert_ne!(l_0, l_1);
+    self.add_clause_with_lits(cref, l_0, l_1);
+    None
   }
   pub fn set<CB>(&mut self, l_0: Literal, assns: &[Option<bool>], db: &Database, cb: CB)
   where
