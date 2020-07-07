@@ -10,10 +10,9 @@ pub struct WatchList {
 }
 
 impl WatchList {
-  pub fn new(vars: u32) -> Self {
-    Self {
-      occs: vec![HashMap::with_hasher(Default::default()); (vars as usize) << 1],
-    }
+  pub const fn new() -> Self {
+    let occs = vec![];
+    Self { occs }
   }
   pub fn watch(&mut self, cref: CRef, db: &Database) -> Option<Literal> {
     let mut lits = cref.iter(db).take(2);
@@ -153,5 +152,12 @@ impl WatchList {
         .drain()
         .map(move |(cref, l_1)| (Literal::from(l_0 as u32), l_1, cref))
     })
+  }
+  pub fn clear(&mut self) { self.occs.clear(); }
+  pub fn resize(&mut self, vars: u32) {
+    assert!(self.occs.is_empty());
+    self.occs.resize_with((vars as usize) << 1, || {
+      HashMap::with_hasher(Default::default())
+    });
   }
 }

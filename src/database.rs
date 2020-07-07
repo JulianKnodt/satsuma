@@ -41,6 +41,12 @@ impl Database {
       num_clauses: 0,
     }
   }
+  pub fn clear(&mut self) {
+    self.literals.clear();
+    self.swap_space.clear();
+    self.max_var = 0;
+    self.num_clauses = 0;
+  }
   /*
   #[must_use]
   pub fn add_clause(&mut self, ls: impl Iterator<Item = Literal>) -> CRef {

@@ -17,4 +17,4 @@ mod watch_list_2;
 pub use watch_list_2::WatchList;
 
 mod solver;
-pub use solver::{solver_from_dimacs, Solver};
+pub use solver::Solver;

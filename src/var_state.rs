@@ -31,13 +31,9 @@ pub const DEFAULT_DECAY_RATE: f32 = 1.2;
 pub const DEFAULT_INC_AMT: f32 = 1.0;
 
 impl VariableState {
-  pub fn new(vars: u32) -> Self {
-    let mut priorities = PriorityQueue::with_capacity_and_default_hasher(vars as usize);
-    for i in 0..vars {
-      priorities.push(i, Priority(0.0));
-    }
+  pub fn new() -> Self {
     Self {
-      priorities,
+      priorities: PriorityQueue::with_default_hasher(),
       decay_rate: DEFAULT_DECAY_RATE,
       inc_amt: DEFAULT_INC_AMT,
     }
@@ -78,5 +74,13 @@ impl VariableState {
       .change_priority(&var, Priority(-(p + f32::EPSILON)));
     // assert!(self.evicted[next.0 as usize].replace(next.1).is_none());
     var
+  }
+
+  pub fn clear(&mut self) { self.priorities.clear(); }
+  pub fn resize(&mut self, vars: u32) {
+    assert!(self.priorities.is_empty());
+    for i in 0..vars {
+      self.priorities.push(i, Priority(0.0));
+    }
   }
 }

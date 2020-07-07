@@ -56,18 +56,17 @@ pub struct Solver {
 }
 
 impl Solver {
-  pub fn new(db: Database) -> Self {
-    let max_vars = db.max_var;
+  pub fn new() -> Self {
     Self {
-      assignments: vec![None; max_vars as usize],
+      assignments: vec![],
       assignment_trail: vec![],
       level_indeces: vec![],
-      levels: vec![None; max_vars as usize],
-      causes: vec![None; max_vars as usize],
-      watch_list: WatchList::new(max_vars),
-      database: db,
-      polarities: vec![false; max_vars as usize],
-      var_state: VariableState::new(max_vars),
+      levels: vec![],
+      causes: vec![],
+      watch_list: WatchList::new(),
+      database: Database::new(),
+      polarities: vec![],
+      var_state: VariableState::new(),
       level: 0,
       restart_state: RestartState::new(RESTART_BASE, RESTART_INC),
 
@@ -78,6 +77,36 @@ impl Solver {
       cref_buf: vec![],
       seen_stack: vec![],
     }
+  }
+  pub fn resize(&mut self, max_vars: u32) {
+    self.assignments.resize(max_vars as usize, None);
+    self.levels.resize(max_vars as usize, None);
+    self.causes.resize(max_vars as usize, None);
+    self.polarities.resize(max_vars as usize, false);
+
+    self.watch_list.resize(max_vars);
+
+    self.var_state.resize(max_vars);
+  }
+  pub fn clear(&mut self) {
+    self.assignments.clear();
+    self.assignment_trail.clear();
+    self.level_indeces.clear();
+    self.levels.clear();
+    self.causes.clear();
+    self.watch_list.clear();
+    self.database.clear();
+    self.polarities.clear();
+    self.var_state.clear();
+    self.level = 0;
+    self.restart_state = RestartState::new(RESTART_BASE, RESTART_INC);
+
+    self.analyze_seen.clear();
+    self.stats = Stats::new();
+    self.learnt_buf.clear();
+    self.unit_buf.clear();
+    self.cref_buf.clear();
+    self.seen_stack.clear();
   }
   /// Attempt to find a satisfying assignment for the current solver.
   /// Returning true if there is a solution found.
@@ -149,7 +178,7 @@ impl Solver {
         for (cref, l_0, l_1) in new_crefs {
           if !l_1.is_valid() {
             self.unit_buf.push((cref, l_0));
-            continue
+            continue;
           }
           let unit = self.watch_list.watch_with_lits(cref, l_0, l_1);
           assert!(
@@ -158,7 +187,7 @@ impl Solver {
           );
         }
         if self.with_units_from_buf().is_some() {
-          return false
+          return false;
         }
         max_learnts *= LEARNTSIZE_INC;
       }
@@ -384,9 +413,7 @@ impl Solver {
       let curr = cause.as_slice(&self.database);
       // TODO need to convert this into a slice so it looks cleaner or an iterator
       for i in i..curr.len() as u32 {
-        let to_check = unsafe {
-          *curr.get_unchecked(i as usize)
-        };
+        let to_check = unsafe { *curr.get_unchecked(i as usize) };
         if to_check == lit
           || self.levels[to_check.var() as usize] == Some(0)
           || seen.get(&to_check.var()).map_or(false, |&ss| {
@@ -415,6 +442,22 @@ impl Solver {
     debug_assert!(seen_stack.is_empty());
     true
   }
+  pub fn load_dimacs<S: AsRef<Path>>(&mut self, s: S) -> io::Result<bool> {
+    crate::parser::from_dimacs(s, &mut self.database, &mut self.cref_buf)?;
+    self.resize(self.database.max_var);
+    let mut cref_buf = replace(&mut self.cref_buf, vec![]);
+    for cref in cref_buf.drain(..) {
+      let lit = self.watch_list.watch(cref, &self.database);
+      if let Some(lit) = lit {
+        if let Some(_conflict) = self.with(lit, Some(cref)) {
+          // This show there is a conflict
+          return Ok(false);
+        }
+      }
+    }
+    self.cref_buf = cref_buf;
+    Ok(true)
+  }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -422,24 +465,4 @@ enum SeenState {
   Source,
   Redundant,
   Required,
-}
-
-pub fn solver_from_dimacs<S: AsRef<Path>>(s: S) -> io::Result<Solver> {
-  let mut db = Database::new();
-  let mut crefs = crate::parser::from_dimacs_2(s, &mut db)?;
-  let mut solver = Solver::new(db);
-  for cref in crefs.drain(..) {
-    // TODO handle repeated but not consecutive elements
-    let lit = solver.watch_list.watch(cref, &solver.database);
-    if let Some(lit) = lit {
-      // TODO make this not just throw but do something nicer
-      assert_eq!(
-        solver.with(lit, Some(cref)),
-        None,
-        "UNSAT from initial conditions"
-      );
-    }
-  }
-  solver.cref_buf = crefs;
-  Ok(solver)
 }

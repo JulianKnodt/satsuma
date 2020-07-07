@@ -1,5 +1,5 @@
 use clap::{App, Arg};
-use satsuma::solver_from_dimacs;
+use satsuma::Solver;
 
 fn main() {
   let matches = App::new("satsuma")
@@ -17,8 +17,14 @@ fn main() {
         .multiple(true),
     )
     .get_matches();
+  let mut solver = Solver::new();
   for file_name in matches.values_of("input").unwrap() {
-    let mut solver = solver_from_dimacs(file_name).expect("Failed to create solver");
+    solver.clear();
+    let no_conflict = solver.load_dimacs(file_name).expect("Failed to load DIMACs file");
+    if !no_conflict {
+      println!("{:?} UNSAT", file_name);
+      continue
+    }
     let has_solution = solver.solve();
     if has_solution {
       println!("{} SAT", file_name);

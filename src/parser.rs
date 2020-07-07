@@ -4,12 +4,10 @@ use std::{
   io::{self, BufRead, BufReader},
   path::Path,
 };
-
 // TODO might need to eventually convert this into a streaming
-pub fn from_dimacs_2<S: AsRef<Path>>(s: S, db: &mut Database) -> io::Result<Vec<CRef>> {
+pub fn from_dimacs<S: AsRef<Path>>(s: S, db: &mut Database, out: &mut Vec<CRef>) -> io::Result<()> {
   let file = File::open(s)?;
   let buf_reader = BufReader::new(file);
-  let mut out = vec![];
   let mut buf = vec![];
   // reported max seen variable
   let mut max_seen_var = 0;
@@ -50,5 +48,12 @@ pub fn from_dimacs_2<S: AsRef<Path>>(s: S, db: &mut Database) -> io::Result<Vec<
     }
   }
   assert!(max_seen_var <= db.max_var);
+  Ok(())
+}
+
+// TODO might need to eventually convert this into a streaming
+pub fn from_dimacs_2<S: AsRef<Path>>(s: S, db: &mut Database) -> io::Result<Vec<CRef>> {
+  let mut out = vec![];
+  from_dimacs(s, db, &mut out)?;
   Ok(out)
 }
