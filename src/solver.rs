@@ -367,39 +367,6 @@ impl Solver {
     }
   }
 
-  /// checks whether a literal in a conflict clause is redundant
-  #[allow(dead_code)]
-  fn lit_redundant(
-    &self,
-    lit: Literal,
-    seen: &mut HashMap<u32, SeenState, BuildHasherDefault<FxHasher>>,
-  ) -> bool {
-    let cause = self.reason(lit.var()).unwrap();
-    let literals = cause
-      .iter(&self.database)
-      .filter(|l| self.reason(l.var()).map_or(true, |reason| reason == cause));
-
-    for lit in literals {
-      let redundant = self.levels[lit.var() as usize] == Some(0)
-        || seen.get(&lit.var()).map_or(false, |&ss| {
-          ss == SeenState::Source || ss == SeenState::Redundant
-        });
-      if redundant {
-        continue;
-      }
-      let required = self.reason(lit.var()).is_none()
-        || seen
-          .get(&lit.var())
-          .map_or(false, |&ss| ss == SeenState::Required)
-        || !self.lit_redundant(*lit, seen);
-      if required {
-        seen.entry(lit.var()).or_insert(SeenState::Required);
-        return false;
-      }
-    }
-    seen.entry(lit.var() as u32).or_insert(SeenState::Redundant);
-    true
-  }
   fn lit_redundant_2(
     &self,
     lit: Literal,
@@ -417,7 +384,9 @@ impl Solver {
       let curr = cause.as_slice(&self.database);
       // TODO need to convert this into a slice so it looks cleaner or an iterator
       for i in i..curr.len() as u32 {
-        let to_check = curr[i as usize];
+        let to_check = unsafe {
+          *curr.get_unchecked(i as usize)
+        };
         if to_check == lit
           || self.levels[to_check.var() as usize] == Some(0)
           || seen.get(&to_check.var()).map_or(false, |&ss| {
