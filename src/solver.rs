@@ -238,7 +238,7 @@ impl Solver {
     let mut seen_stack = replace(&mut self.seen_stack, vec![]);
     // minimization before adding asserting literal
     learnt.retain(|lit| {
-      self.reason(lit.var()).is_none() || !self.lit_redundant_2(*lit, &mut seen, &mut seen_stack)
+      self.reason(lit.var()).is_none() || !self.lit_redundant(*lit, &mut seen, &mut seen_stack)
     });
     self.seen_stack = seen_stack;
 
@@ -366,7 +366,7 @@ impl Solver {
     }
   }
 
-  fn lit_redundant_2(
+  fn lit_redundant(
     &self,
     lit: Literal,
     seen: &mut HashMap<u32, SeenState, BuildHasherDefault<FxHasher>>,

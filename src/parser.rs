@@ -52,7 +52,7 @@ pub fn from_dimacs<S: AsRef<Path>>(s: S, db: &mut Database, out: &mut Vec<CRef>)
 }
 
 // TODO might need to eventually convert this into a streaming
-pub fn from_dimacs_2<S: AsRef<Path>>(s: S, db: &mut Database) -> io::Result<Vec<CRef>> {
+pub fn from_dimacs_alloc<S: AsRef<Path>>(s: S, db: &mut Database) -> io::Result<Vec<CRef>> {
   let mut out = vec![];
   from_dimacs(s, db, &mut out)?;
   Ok(out)

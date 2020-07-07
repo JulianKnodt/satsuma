@@ -1,248 +1,163 @@
-use crate::{
-  database::{ClauseDatabase, ClauseRef},
-  literal::Literal,
-};
+use crate::{CRef, Database, Literal};
 use hashbrown::{hash_map::Entry, HashMap};
+use rustc_hash::FxHasher;
+use std::{hash::BuildHasherDefault, mem::replace};
 
-/// An implementation of occurrence lists based on MiniSat's OccList
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct WatchList {
-  occurrences: Vec<HashMap<ClauseRef, Literal>>
+  // watched literal -> Watched clauses
+  occs: Vec<HashMap<CRef, Literal, BuildHasherDefault<FxHasher>>>,
 }
 
-/// leaves enough space for both true and false variables up to max_var.
-#[inline]
-fn space_for_all_lits(size: usize) -> usize { (size << 1) }
-
 impl WatchList {
-  /// returns a new watchlist, as well as any unit clauses
-  /// from the initial constraints
-  pub fn new(db: &ClauseDatabase) -> (Self, Vec<(ClauseRef, Literal)>) {
-    let mut wl = Self {
-      occurrences: vec![HashMap::new(); space_for_all_lits(db.max_var)].into_boxed_slice(),
-    };
-    let units = db
-      .iter()
-      .filter_map(|cref| wl.watch(&cref).map(|lit| (cref, lit)))
-      .collect();
-    (wl, units)
+  pub const fn new() -> Self {
+    let occs = vec![];
+    Self { occs }
   }
-  /// Adds some clause from the given database to this list.
-  /// It must not have previously been added to the list.
-  fn watch(&mut self, cref: &ClauseRef) -> Option<Literal> {
-    let mut lits = cref.literals.iter().take(2);
-    match lits.next() {
+  pub fn watch(&mut self, cref: CRef, db: &Database) -> Option<Literal> {
+    let mut lits = cref.iter(db).take(2);
+    let l_0 = match lits.next() {
+      // TODO make this unreachable?
       None => panic!("Empty clause passed to watch"),
-      Some(&lit) => match lits.next() {
-        None => Some(lit),
-        Some(&o_lit) => {
-          assert!(self.add_clause_with_lits(cref.clone(), lit, o_lit));
-          None
-        },
-      },
+      Some(&lit) => lit,
+    };
+    if let Some(&l_1) = lits.next() {
+      assert_ne!(
+        l_0, l_1,
+        "Attempted to watch clause with repeated literals {}",
+        l_0
+      );
+      self.add_clause_with_lits(cref, l_0, l_1);
+      None
+    } else {
+      Some(l_0)
     }
   }
-  /// adds a learnt clause, which is assumed to have at least two literals as well as cause
-  /// and implication.
-  pub(crate) fn add_learnt(&mut self, assns: &[Option<bool>], cref: &ClauseRef) -> Literal {
-    if cref.literals.len() == 1 {
-      return cref.literals[0];
-    }
-    self.activities.push(Arc::downgrade(&cref.activity));
-    debug_assert!(cref
-      .literals
-      .iter()
-      .all(|lit| lit.assn(assns) != Some(true)));
-    debug_assert_eq!(
-      1,
-      cref
-        .literals
-        .iter()
-        .filter(|lit| lit.assn(assns).is_none())
-        .count()
-    );
-    let false_lit = *cref
-      .literals
-      .iter()
-      .find(|lit| lit.assn(&assns) == Some(false))
-      .unwrap();
-    let unassn = *cref
-      .literals
-      .iter()
-      .find(|lit| lit.assn(&assns).is_none())
-      .unwrap();
-    if let Entry::Vacant(v) = self.occurrences[unassn.raw() as usize].entry(cref.clone()) {
-      v.insert(false_lit);
-      assert!(self.occurrences[false_lit.raw() as usize]
-        .insert(cref.clone(), unassn)
-        .is_none());
-    }
-    unassn
+  /// Watches a clause with two literals, assuming the literals are inside the clause
+  pub(crate) fn watch_with_lits(
+    &mut self,
+    cref: CRef,
+    l_0: Literal,
+    l_1: Literal,
+  ) -> Option<Literal> {
+    debug_assert!(l_0.is_valid());
+    debug_assert!(l_1.is_valid());
+    debug_assert_ne!(l_0, l_1);
+    self.add_clause_with_lits(cref, l_0, l_1);
+    None
   }
-  pub fn set<T>(&mut self, lit: Literal, assns: &[Option<bool>], into: &mut T)
+  pub fn set<CB>(&mut self, l_0: Literal, assns: &[Option<bool>], db: &Database, cb: CB)
   where
-    T: Extend<(ClauseRef, Literal)>, {
-    // Sanity check that we actually assigned this variable
-    debug_assert_eq!(lit.assn(assns), Some(true));
-    self.set_false(!lit, assns, into)
+    CB: FnMut(CRef, Literal), {
+    debug_assert_eq!(l_0.assn(assns), Some(true));
+    self.set_false(!l_0, assns, db, cb);
   }
-  /// Sets a given literal to false in this watch list
-  fn set_false<T>(&mut self, lit: Literal, assns: &[Option<bool>], into: &mut T)
+  pub fn set_false<CB>(&mut self, l_0: Literal, assns: &[Option<bool>], db: &Database, mut cb: CB)
   where
-    T: Extend<(ClauseRef, Literal)>, {
-    use std::mem::swap;
-    let mut swap_map = HashMap::new();
-    swap(&mut self.occurrences[lit.raw() as usize], &mut swap_map);
-    // removing items from the list without draining
-    // should help improve efficiency
-    swap_map.retain(|cref, &mut o_lit| {
-      assert_ne!(lit, o_lit);
-      // If the other one is set to true, we shouldn't update the watch list
-      if o_lit.assn(assns) == Some(true) {
-        debug_assert_eq!(self.occurrences[o_lit.raw() as usize][&cref], lit);
+    CB: FnMut(CRef, Literal), {
+    // TODO move this into the struct so that no work needs to be done
+    let temp = HashMap::with_hasher(Default::default());
+
+    let mut set_map = unsafe {
+      debug_assert!(self.occs.len() > l_0.raw() as usize);
+      // unsafe access for speed
+      let set_map = self.occs.get_unchecked_mut(l_0.raw() as usize);
+      replace(set_map, temp)
+    };
+    let occs = &mut self.occs;
+    let out = set_map.drain_filter(move |&cref, &mut l_1| {
+      debug_assert_ne!(l_0, l_1);
+      if l_1.assn(assns) == Some(true) {
+        debug_assert_eq!(&occs[l_1.raw() as usize][&cref], &l_0);
         return true;
       }
       let mut next = None;
-      let mut lits = cref.literals.iter().filter(|&&lit| lit != o_lit);
-      while let Some(lit) = lits.next() {
-        match lit.assn(assns) {
+      for &l in cref.iter(db).filter(|&&l| l != l_1) {
+        match l.assn(assns) {
           Some(false) => (),
-          None => {
-            next.replace(lit);
-          },
           Some(true) => {
-            next.replace(lit);
+            next = Some(l);
             break;
           },
-        };
+          None => next = Some(l),
+        }
       }
-      match next {
-        // In the case of none, then it implies this is a unit clause,
-        // so return it and the literal that needs to be set in it.
-        None => {
-          debug_assert_eq!(self.occurrences[o_lit.raw() as usize][&cref], lit);
-          into.extend(std::iter::once((cref.clone(), o_lit)));
-          true
-        },
-        Some(&next) => {
-          debug_assert_ne!(lit, next);
-          debug_assert_ne!(o_lit, next);
-          *self.occurrences[o_lit.raw() as usize]
-            .get_mut(&cref)
-            .unwrap() = next;
-          self.occurrences[next.raw() as usize].insert(cref.clone(), o_lit);
-          debug_assert_eq!(self.occurrences[next.raw() as usize][&cref], o_lit);
-          debug_assert_eq!(self.occurrences[o_lit.raw() as usize][&cref], next);
-          debug_assert!(next.assn(assns) != Some(false));
-          false
-        },
+      if let Some(next) = next {
+        debug_assert_ne!(next, l_1);
+        debug_assert_ne!(next, l_0);
+        // TODO convert these to unchecked
+        *occs[l_1.raw() as usize].get_mut(&cref).unwrap() = next;
+        occs[next.raw() as usize].insert(cref, l_1);
+        debug_assert_eq!(occs[next.raw() as usize][&cref], l_1);
+        debug_assert_eq!(occs[l_1.raw() as usize][&cref], next);
+        debug_assert!(next.assn(assns) != Some(false));
+        false
+      } else {
+        debug_assert_eq!(occs[l_1.raw() as usize][&cref], l_0);
+        cb(cref, l_1);
+        true
       }
     });
-    swap(&mut self.occurrences[lit.raw() as usize], &mut swap_map);
+    for _ in out {}
+    debug_assert!(self.occs[l_0.raw() as usize].is_empty());
+    unsafe {
+      *self.occs.get_unchecked_mut(l_0.raw() as usize) = set_map;
+    }
   }
-  /// Adds a transferred clause to this watchlist.
-  /// If all literals are false
-  /// - And none have causes => Pick one at random(Maybe one with lowest priority)
-  /// - And some have causes => Pick one with highest level
-  /// Else if one literal is true, watch true lit and any false
-  /// Else if one literal is unassigned, watch it and any false and return it
-  /// Else watch unassigneds.
-  pub fn add_transfer(
-    &mut self,
-    assns: &[Option<bool>],
-    causes: &[Option<ClauseRef>],
-    levels: &[Option<usize>],
-    cref: &ClauseRef,
-  ) -> Option<Literal> {
-    let literals = &cref.literals;
-    assert!(!literals.is_empty());
-    if literals.len() == 1 {
-      return match literals[0].assn(assns) {
-        Some(false) | None => Some(literals[0]),
+  fn add_clause_with_lits(&mut self, c: CRef, l_0: Literal, l_1: Literal) {
+    let evicted = self.occs[l_0.raw() as usize].insert(c, l_1);
+    debug_assert!(evicted.is_none());
+    let evicted = self.occs[l_1.raw() as usize].insert(c, l_0);
+    debug_assert!(evicted.is_none());
+  }
+  pub fn add_learnt(&mut self, assns: &[Option<bool>], cref: CRef, db: &Database) -> Literal {
+    if cref.len() == 1 {
+      return unsafe { *cref.as_slice(&db).get_unchecked(0) };
+    }
+    let mut lits = cref.iter(db);
+    let (l_0, is_unassn) = lits
+      .find_map(|&l| match l.assn(&assns) {
+        None => Some((l, true)),
+        Some(false) => Some((l, false)),
         Some(true) => None,
-      };
+      })
+      .unwrap();
+    let (unassn, false_lit) = if is_unassn {
+      (l_0, *lits.find(|l| l.assn(&assns) == Some(false)).unwrap())
+    } else {
+      (*lits.find(|l| l.assn(&assns) == None).unwrap(), l_0)
+    };
+    if let Entry::Vacant(v) = self.occs[unassn.raw() as usize].entry(cref) {
+      v.insert(false_lit);
+      let prev = self.occs[false_lit.raw() as usize].insert(cref, unassn);
+      debug_assert!(prev.is_none());
     }
-    if self.already_exists(cref) {
-      return None;
-    }
-    let mut watchable = literals
-      .iter()
-      .filter(|lit| lit.assn(&assns) != Some(false));
-    match watchable.next() {
-      None => {
-        // this case can cause unsoundness on some rare occasions
-        let to_backtrack = *literals
-          .iter()
-          .filter(|lit| causes[lit.var()].is_some())
-          // max by seems to work better than min by but both work
-          .max_by_key(|lit| levels[lit.var()])
-          .unwrap_or_else(|| literals.iter().max_by_key(|lit| levels[lit.var()]).unwrap());
-        let other_false = *literals
-          .iter()
-          .filter(|lit| levels[lit.var()].unwrap() < levels[to_backtrack.var()].unwrap())
-          .find(|&&lit| lit != to_backtrack)?;
-        debug_assert_ne!(to_backtrack, other_false);
-        debug_assert!(levels[to_backtrack.var()] > levels[other_false.var()]);
-        assert!(self.add_clause_with_lits(cref.clone(), to_backtrack, other_false));
-        Some(to_backtrack)
-      },
-      Some(&lit) => match watchable.next() {
-        None => match lit.assn(assns) {
-          // Don't track clauses which have a true literal
-          Some(true) => None,
-          Some(false) => unreachable!(),
-          None => {
-            if !self.occurrences[lit.raw() as usize].contains_key(&cref) {
-              let other = *literals
-                .iter()
-                .find(|lit| lit.assn(&assns) == Some(false))?;
-              self.activities.push(Arc::downgrade(&cref.activity));
-              assert!(self.add_clause_with_lits(cref.clone(), lit, other));
-            }
-            Some(lit)
-          },
-        },
-        Some(&o_lit) => {
-          self.activities.push(Arc::downgrade(&cref.activity));
-          assert!(self.add_clause_with_lits(cref.clone(), lit, o_lit));
-          None
-        },
-      },
-    }
+    unassn
   }
-  fn already_exists(&self, cref: &ClauseRef) -> bool {
-    cref
-      .literals
-      .iter()
-      .any(|lit| self.occurrences[lit.raw() as usize].contains_key(cref))
-  }
-  /// Adds a clause with the given literals into the watch list.
-  /// Returns true if another clause was evicted, which likely implies an invariant
-  /// was broken.
-  #[must_use]
-  fn add_clause_with_lits(&mut self, cref: ClauseRef, lit: Literal, o_lit: Literal) -> bool {
-    self.occurrences[lit.raw() as usize]
-      .insert(cref.clone(), o_lit)
-      .is_none()
-      && self.occurrences[o_lit.raw() as usize]
-        .insert(cref, lit)
-        .is_none()
-  }
-
   pub fn remove_satisfied(&mut self, assns: &[Option<bool>]) {
-    // TODO could I swap the ordering here of which lit is being removed
-    self
-      .occurrences
-      .iter_mut()
-      .enumerate()
-      .filter(|(_, watches)| !watches.is_empty())
-      .for_each(|(lit, watches)| {
-        if Literal::from(lit as u32).assn(assns) == Some(true) {
-          watches.clear();
-        } else {
-          watches.retain(|_, other_lit| other_lit.assn(assns) != Some(true));
-        }
-        watches.shrink_to_fit();
-      });
+    for (l_0, watches) in self.occs.iter_mut().enumerate() {
+      if watches.is_empty() {
+        continue;
+      }
+      if Literal::from(l_0 as u32).assn(assns) == Some(true) {
+        watches.clear();
+      } else {
+        watches.retain(|_, l_1| l_1.assn(assns) != Some(true));
+      }
+    }
+  }
+  pub fn drain(&mut self) -> impl Iterator<Item = (Literal, Literal, CRef)> + '_ {
+    self.occs.iter_mut().enumerate().flat_map(|(l_0, watches)| {
+      watches
+        .drain()
+        .map(move |(cref, l_1)| (Literal::from(l_0 as u32), l_1, cref))
+    })
+  }
+  pub fn clear(&mut self) { self.occs.clear(); }
+  pub fn resize(&mut self, vars: u32) {
+    assert!(self.occs.is_empty());
+    self.occs.resize_with((vars as usize) << 1, || {
+      HashMap::with_hasher(Default::default())
+    });
   }
 }

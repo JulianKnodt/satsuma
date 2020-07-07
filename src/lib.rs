@@ -13,8 +13,8 @@ mod stats;
 pub use stats::Stats;
 mod var_state;
 pub use var_state::VariableState;
-mod watch_list_2;
-pub use watch_list_2::WatchList;
+mod watch_list;
+pub use watch_list::WatchList;
 
 mod solver;
 pub use solver::Solver;
