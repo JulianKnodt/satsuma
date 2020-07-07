@@ -52,6 +52,7 @@ pub struct Solver {
   learnt_buf: Vec<Literal>,
   unit_buf: Vec<(CRef, Literal)>,
   cref_buf: Vec<CRef>,
+  seen_stack: Vec<(u32, Literal)>,
 }
 
 impl Solver {
@@ -75,6 +76,7 @@ impl Solver {
       learnt_buf: vec![],
       unit_buf: vec![],
       cref_buf: vec![],
+      seen_stack: vec![],
     }
   }
   /// Attempt to find a satisfying assignment for the current solver.
@@ -226,8 +228,12 @@ impl Solver {
       let conflict = causes.0.expect("No cause found in analyze?");
       causes = learn_until_uip(&conflict, causes.1, causes.2, Some(causes.3));
     }
+    let mut seen_stack = replace(&mut self.seen_stack, vec![]);
     // minimization before adding asserting literal
-    // learnt.retain(|lit| self.reason(lit.var()).is_none() || !self.lit_redundant(*lit, &mut seen));
+    learnt.retain(|lit| {
+      self.reason(lit.var()).is_none() || !self.lit_redundant_2(*lit, &mut seen, &mut seen_stack)
+    });
+    self.seen_stack = seen_stack;
 
     // add asserting literal
     learnt.push(!causes.3);
@@ -350,6 +356,7 @@ impl Solver {
   }
 
   /// checks whether a literal in a conflict clause is redundant
+  #[allow(dead_code)]
   fn lit_redundant(
     &self,
     lit: Literal,
@@ -379,6 +386,52 @@ impl Solver {
       }
     }
     seen.entry(lit.var() as u32).or_insert(SeenState::Redundant);
+    true
+  }
+  fn lit_redundant_2(
+    &self,
+    lit: Literal,
+    seen: &mut HashMap<u32, SeenState, BuildHasherDefault<FxHasher>>,
+    seen_stack: &mut Vec<(u32, Literal)>,
+  ) -> bool {
+    debug_assert!(seen
+      .get(&lit.var())
+      .map_or(true, |&ss| ss == SeenState::Source));
+    debug_assert!(seen_stack.is_empty());
+    seen_stack.push((0, lit));
+
+    'recur: while let Some((i, lit)) = seen_stack.pop() {
+      let cause = self.reason(lit.var()).unwrap();
+      let curr = cause.as_slice(&self.database);
+      // TODO need to convert this into a slice so it looks cleaner or an iterator
+      for i in i..curr.len() as u32 {
+        let to_check = curr[i as usize];
+        if to_check == lit
+          || self.levels[to_check.var() as usize] == Some(0)
+          || seen.get(&to_check.var()).map_or(false, |&ss| {
+            ss == SeenState::Source || ss == SeenState::Redundant
+          })
+        {
+          continue;
+        }
+        if self.reason(to_check.var()).is_none()
+          || seen
+            .get(&to_check.var())
+            .map_or(false, |&ss| ss == SeenState::Required)
+        {
+          seen.entry(lit.var()).or_insert(SeenState::Required);
+          for (_, lit) in seen_stack.drain(..) {
+            seen.entry(lit.var()).or_insert(SeenState::Required);
+          }
+          return false;
+        }
+        seen_stack.push((i, lit));
+        seen_stack.push((0, to_check));
+        continue 'recur;
+      }
+      seen.entry(lit.var()).or_insert(SeenState::Redundant);
+    }
+    debug_assert!(seen_stack.is_empty());
     true
   }
 }

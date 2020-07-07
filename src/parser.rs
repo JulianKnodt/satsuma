@@ -30,6 +30,8 @@ pub fn from_dimacs_2<S: AsRef<Path>>(s: S, db: &mut Database) -> io::Result<Vec<
       let v = v.parse::<i32>().expect("Failed to parse literal");
       if v == 0 {
         assert!(!buf.is_empty(), "Empty clause in input");
+        // Some inputs have duplications which break the solver.
+        // Sorting and then deduping might work best but this is cheaper for now.
         buf.dedup();
         let cref = db.add_clause_from_slice(&buf);
         out.push(cref);
