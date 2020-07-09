@@ -8,6 +8,8 @@ pub const RESTART_INC: u64 = 2;
 pub const LEARNTSIZE_FACTOR: f32 = 1.0 / 3.0;
 pub const LEARNTSIZE_INC: f32 = 1.3;
 
+const INVALID_LEVEL: u32 = std::u32::MAX;
+
 #[derive(Debug)]
 pub struct Solver {
   /// which vars are assigned to what at the current stage
@@ -21,7 +23,7 @@ pub struct Solver {
 
   /// keeps track of which clause caused a variable to be assigned and what level it was
   /// assigned it. None in the case of unassigned or assumption
-  levels: Vec<Option<u32>>,
+  levels: Vec<u32>,
   causes: Vec<Option<CRef>>,
 
   database: Database,
@@ -202,14 +204,14 @@ impl Solver {
           .iter(db)
           // only find new literals
           .filter(|&&lit| previous_lit.map_or(true, |prev| prev != lit))
-          .filter(|&&lit| match &levels[lit.var() as usize] {
-            None | Some(0) => false,
-            Some(lvl) => match seen.entry(lit.var()) {
+          .filter(|&&lit| match levels[lit.var() as usize] {
+            INVALID_LEVEL | 0 => false,
+            lvl => match seen.entry(lit.var()) {
               Entry::Occupied(_) => false,
               Entry::Vacant(ent) => {
                 ent.insert(SeenState::Source);
                 var_state.increase_var_activity(lit.var());
-                let trail = *lvl >= decision_level;
+                let trail = lvl >= decision_level;
                 if !trail {
                   learnt.push(lit)
                 }
@@ -255,7 +257,7 @@ impl Solver {
       return (cref, 0);
     }
     // get the first two items explicitly
-    let mut levels = learnt.iter().map(|lit| levels[lit.var() as usize].unwrap());
+    let mut levels = learnt.iter().map(|lit| levels[lit.var() as usize]);
     let curr_max = levels.next().unwrap();
     let mut others = levels.filter(|&lvl| lvl != curr_max);
     let (max, second) = match others.next() {
@@ -299,8 +301,10 @@ impl Solver {
       let var = lit.var();
       let prev_assn = self.assignments[var as usize].take();
       debug_assert_ne!(prev_assn, None);
-      let prev_level = self.levels[var as usize].take();
-      debug_assert_ne!(prev_level, None);
+
+      debug_assert_ne!(self.levels[var as usize], INVALID_LEVEL);
+      self.levels[var as usize] = INVALID_LEVEL;
+
       self.polarities[var as usize] = lit.val();
       self.causes[var as usize] = None;
       self.var_state.enable(var);
@@ -316,8 +320,9 @@ impl Solver {
       None => {
         debug_assert!(lit.assn(&self.assignments).is_none());
         self.assignment_trail.push(lit);
-        let prev_level = self.levels[lit.var() as usize].replace(self.level);
-        debug_assert_eq!(prev_level, None);
+        debug_assert_eq!(self.levels[lit.var() as usize], INVALID_LEVEL);
+        self.levels[lit.var() as usize] = self.level;
+
         debug_assert_eq!(self.assignments[lit.var() as usize], None);
         self.assignments[lit.var() as usize] = Some(lit.val());
         self
@@ -343,8 +348,8 @@ impl Solver {
       let var = lit.var() as usize;
       let prev_cause = self.causes[var].replace(cause);
       debug_assert_eq!(prev_cause, None);
-      let prev_level = self.levels[var].replace(self.level);
-      debug_assert_eq!(prev_level, None);
+      debug_assert_eq!(self.levels[var], INVALID_LEVEL);
+      self.levels[var] = self.level;
       let prev_assn = self.assignments[var].replace(lit.val());
       debug_assert_eq!(prev_assn, None);
       self
@@ -384,7 +389,7 @@ impl Solver {
       // TODO need to convert this into a slice so it looks cleaner or an iterator
       for i in i..curr.len() as u32 {
         let to_check = unsafe { *curr.get_unchecked(i as usize) };
-        let level_0 = self.levels[to_check.var() as usize] == Some(0);
+        let level_0 = self.levels[to_check.var() as usize] == 0;
         let previously_redundant = seen.get(&to_check.var()).map_or(false, |&ss| {
           ss == SeenState::Source || ss == SeenState::Redundant
         });
@@ -429,8 +434,9 @@ impl Solver {
   }
 
   pub fn resize(&mut self, max_vars: u32) {
+    self.levels.resize(max_vars as usize, INVALID_LEVEL);
+
     self.assignments.resize(max_vars as usize, None);
-    self.levels.resize(max_vars as usize, None);
     self.causes.resize(max_vars as usize, None);
     self.polarities.resize(max_vars as usize, false);
 
