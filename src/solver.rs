@@ -19,7 +19,7 @@ pub struct Solver {
   assignment_trail: Vec<Literal>,
 
   /// Which index in the assignment trail was a variable assigned at
-  level_indeces: Vec<usize>,
+  level_indeces: Vec<u32>,
 
   /// keeps track of which clause caused a variable to be assigned and what level it was
   /// assigned it. None in the case of unassigned or assumption
@@ -284,7 +284,7 @@ impl Solver {
     (cref, second)
   }
   pub fn next_level(&mut self) -> u32 {
-    self.level_indeces.push(self.assignment_trail.len());
+    self.level_indeces.push(self.assignment_trail.len() as u32);
     self.level += 1;
     self.level
   }
@@ -295,7 +295,7 @@ impl Solver {
       return;
     }
     self.level = lvl;
-    let index = self.level_indeces[lvl as usize];
+    let index = self.level_indeces[lvl as usize] as usize;
     self.level_indeces.truncate(lvl as usize);
     for lit in self.assignment_trail.drain(index..) {
       let var = lit.var();
