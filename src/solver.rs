@@ -8,21 +8,25 @@ pub const RESTART_INC: u64 = 2;
 pub const LEARNTSIZE_FACTOR: f32 = 1.0 / 3.0;
 pub const LEARNTSIZE_INC: f32 = 1.3;
 
-const INVALID_LEVEL: u32 = std::u32::MAX;
+/// Reserved value that specifies an invalid value
+pub const INVALID_LEVEL: u32 = std::u32::MAX;
 
 #[derive(Debug)]
 pub struct Solver {
   /// which vars are assigned to what at the current stage
+  // TODO could compress this into some sort of bit array with a mask
   assignments: Vec<Option<bool>>,
 
   /// stack of assignments, needed for backtracking
   assignment_trail: Vec<Literal>,
 
   /// Which index in the assignment trail was a variable assigned at
+  // despite this being u32 this is an index into an array.
   level_indeces: Vec<u32>,
 
   /// keeps track of which clause caused a variable to be assigned and what level it was
   /// assigned it. None in the case of unassigned or assumption
+  // despite this being a u32, there are INVALID entries, as represented by INVALID_LEVEL.
   levels: Vec<u32>,
   causes: Vec<Option<CRef>>,
 
@@ -33,6 +37,7 @@ pub struct Solver {
 
   /// last assigned per each variable
   /// initialized to false
+  // TODO could compress this into a bit array
   polarities: Vec<bool>,
 
   /// Var state independent decaying sum
@@ -58,6 +63,7 @@ pub struct Solver {
 }
 
 impl Solver {
+  /// Creates a new instance of this solver
   pub fn new() -> Self {
     Self {
       assignments: vec![],
@@ -283,6 +289,8 @@ impl Solver {
     self.learnt_buf.clear();
     (cref, second)
   }
+
+  /// Increases the level on this solver and returns the level assigned.
   pub fn next_level(&mut self) -> u32 {
     self.level_indeces.push(self.assignment_trail.len() as u32);
     self.level += 1;
@@ -290,10 +298,13 @@ impl Solver {
   }
   /// revert to given level, retaining all state at that level.
   fn backtrack_to(&mut self, lvl: u32) {
+    debug_assert!(lvl >= self.level);
+    /*
     if lvl >= self.level {
       // TODO I'm not sure if this ever actually occurs
       return;
     }
+    */
     self.level = lvl;
     let index = self.level_indeces[lvl as usize] as usize;
     self.level_indeces.truncate(lvl as usize);
@@ -335,6 +346,8 @@ impl Solver {
     };
     self.with_units_from_buf()
   }
+
+  /// reads from unit_buf and attempts to propogate from there
   fn with_units_from_buf(&mut self) -> Option<CRef> {
     let units = &mut self.unit_buf;
     while let Some((cause, lit)) = units.pop() {
@@ -416,6 +429,8 @@ impl Solver {
     debug_assert!(seen_stack.is_empty());
     true
   }
+
+  /// Loads a DIMACs file into this solver
   pub fn load_dimacs<S: AsRef<Path>>(&mut self, s: S) -> io::Result<bool> {
     crate::parser::from_dimacs(s, &mut self.database, &mut self.cref_buf)?;
     self.resize(self.database.max_var);
@@ -433,6 +448,7 @@ impl Solver {
     Ok(true)
   }
 
+  /// Resizes this solver to be ready to handle max_vars.
   pub fn resize(&mut self, max_vars: u32) {
     self.levels.resize(max_vars as usize, INVALID_LEVEL);
 
@@ -444,6 +460,8 @@ impl Solver {
 
     self.var_state.resize(max_vars);
   }
+
+  /// Clears all assignments from this solver
   pub fn clear(&mut self) {
     self.assignments.clear();
     self.assignment_trail.clear();
