@@ -69,7 +69,7 @@ impl WatchList {
       debug_assert_ne!(l_0, l_1);
       if l_1.assn(assns) == Some(true) {
         debug_assert_eq!(&occs[l_1.raw() as usize][&cref], &l_0);
-        return true;
+        return false;
       }
       let mut next = None;
       for &l in cref.iter(db).filter(|&&l| l != l_1) {
@@ -91,11 +91,11 @@ impl WatchList {
         debug_assert_eq!(occs[next.raw() as usize][&cref], l_1);
         debug_assert_eq!(occs[l_1.raw() as usize][&cref], next);
         debug_assert!(next.assn(assns) != Some(false));
-        false
+        true
       } else {
         debug_assert_eq!(occs[l_1.raw() as usize][&cref], l_0);
         cb(cref, l_1);
-        true
+        false
       }
     });
     for _ in out {}
